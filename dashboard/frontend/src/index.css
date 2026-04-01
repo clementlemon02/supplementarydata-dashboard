@@ -1,0 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Manrope:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg: #d7e7ee;
+  font-family: 'Manrope', 'Helvetica Neue', sans-serif;
+  line-height: 1.4;
+  font-weight: 400;
+  color: #173f48;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 700px at 3% -10%, rgba(36, 132, 165, 0.28), transparent 64%),
+    radial-gradient(900px 600px at 103% 110%, rgba(9, 113, 146, 0.24), transparent 52%),
+    linear-gradient(180deg, #dcebf1, #d1e2e9 60%, #d7e6ec),
+    var(--bg);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Sora', 'Trebuchet MS', sans-serif;
+}
