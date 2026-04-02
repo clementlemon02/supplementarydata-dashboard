@@ -38,7 +38,44 @@
 
 .header-tags {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 0.55rem;
+}
+
+.date-filter-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.date-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.22rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(237, 248, 252, 0.25);
+  border: 1px solid rgba(211, 237, 245, 0.45);
+}
+
+.date-filter span {
+  color: #d8f0f7;
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.date-filter input {
+  border: 1px solid rgba(203, 230, 238, 0.72);
+  border-radius: 999px;
+  padding: 0.24rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #0c4f70;
+  background: #f3fbfe;
 }
 
 .date-pill,

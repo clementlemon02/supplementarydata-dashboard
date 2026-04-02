@@ -83,6 +83,18 @@ function mean(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
+function isWithinDateRange(date: string, startDate: string, endDate: string): boolean {
+  if (startDate && date < startDate) {
+    return false
+  }
+
+  if (endDate && date > endDate) {
+    return false
+  }
+
+  return true
+}
+
 async function parseCsv<T>(path: string): Promise<T[]> {
   const response = await fetch(path)
   if (!response.ok) {
@@ -106,6 +118,8 @@ function App() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [error, setError] = useState<string>('')
   const [activeRoomId, setActiveRoomId] = useState<string>('')
+  const [rangeStartDate, setRangeStartDate] = useState<string>('')
+  const [rangeEndDate, setRangeEndDate] = useState<string>('')
 
   useEffect(() => {
     let active = true
@@ -139,18 +153,114 @@ function App() {
     }
   }, [])
 
+  const availableDates = useMemo(() => {
+    if (!data) {
+      return []
+    }
+
+    return Array.from(new Set(data.hourly.map((row) => row.hour_start.slice(0, 10)))).sort((a, b) => a.localeCompare(b))
+  }, [data])
+
+  useEffect(() => {
+    if (availableDates.length === 0) {
+      return
+    }
+
+    const minDate = availableDates[0]
+    const maxDate = availableDates[availableDates.length - 1]
+
+    if (!rangeStartDate || !availableDates.includes(rangeStartDate)) {
+      setRangeStartDate(minDate)
+    }
+
+    if (!rangeEndDate || !availableDates.includes(rangeEndDate)) {
+      setRangeEndDate(maxDate)
+    }
+  }, [availableDates, rangeStartDate, rangeEndDate])
+
+  const filteredHourly = useMemo(() => {
+    if (!data) {
+      return []
+    }
+
+    if (!rangeStartDate && !rangeEndDate) {
+      return data.hourly
+    }
+
+    return data.hourly.filter((row) => isWithinDateRange(row.hour_start.slice(0, 10), rangeStartDate, rangeEndDate))
+  }, [data, rangeStartDate, rangeEndDate])
+
+  const filteredAnomalies = useMemo(() => {
+    if (!data) {
+      return []
+    }
+
+    if (!rangeStartDate && !rangeEndDate) {
+      return data.anomalies
+    }
+
+    return data.anomalies.filter((row) => isWithinDateRange(row.hour_start.slice(0, 10), rangeStartDate, rangeEndDate))
+  }, [data, rangeStartDate, rangeEndDate])
+
   const roomLoad = useMemo(() => {
     if (!data) {
       return []
     }
 
-    return data.baseload.map((row) => ({
-      roomId: row.room_id,
-      room: row.room_name.split('-')[0].trim(),
-      baseload: toNum(row.baseload_kwh),
-      occupied: toNum(row.occupied_load_kwh),
-    }))
-  }, [data])
+    const grouped = new Map<string, { room: string; occupied: number[]; unoccupied: number[]; all: number[] }>()
+    for (const row of filteredHourly) {
+      if (!grouped.has(row.room_id)) {
+        grouped.set(row.room_id, {
+          room: row.room_name.split('-')[0].trim(),
+          occupied: [],
+          unoccupied: [],
+          all: [],
+        })
+      }
+
+      const current = grouped.get(row.room_id)
+      if (!current) {
+        continue
+      }
+
+      const energy = toNum(row.total_energy_kwh)
+      current.all.push(energy)
+      if (toNum(row.is_occupied) === 1 || row.occupancy_mode === 'Occupied') {
+        current.occupied.push(energy)
+      } else {
+        current.unoccupied.push(energy)
+      }
+    }
+
+    if (grouped.size === 0) {
+      return data.baseload.map((row) => ({
+        roomId: row.room_id,
+        room: row.room_name.split('-')[0].trim(),
+        baseload: toNum(row.baseload_kwh),
+        occupied: toNum(row.occupied_load_kwh),
+      }))
+    }
+
+    return Array.from(grouped.entries())
+      .map(([roomId, current]) => ({
+        roomId,
+        room: current.room,
+        baseload: Number(mean(current.unoccupied.length > 0 ? current.unoccupied : current.all).toFixed(3)),
+        occupied: Number(mean(current.occupied.length > 0 ? current.occupied : current.all).toFixed(3)),
+      }))
+      .sort((a, b) => a.room.localeCompare(b.room, undefined, { numeric: true }))
+  }, [data, filteredHourly])
+
+  useEffect(() => {
+    if (!activeRoomId && roomLoad.length > 0) {
+      setActiveRoomId(roomLoad[0].roomId)
+      return
+    }
+
+    if (activeRoomId && !roomLoad.some((row) => row.roomId === activeRoomId)) {
+      setActiveRoomId(roomLoad[0]?.roomId ?? '')
+    }
+  }, [roomLoad, activeRoomId])
 
   const latestRoomStates = useMemo(() => {
     if (!data) {
@@ -158,7 +268,7 @@ function App() {
     }
 
     const latestByRoom = new Map<string, HourlyRow>()
-    for (const row of data.hourly) {
+    for (const row of filteredHourly) {
       const existing = latestByRoom.get(row.room_id)
       if (!existing || new Date(row.hour_start).getTime() > new Date(existing.hour_start).getTime()) {
         latestByRoom.set(row.room_id, row)
@@ -188,16 +298,32 @@ function App() {
         load: actualLoad,
       }
     })
-  }, [data])
+  }, [data, filteredHourly])
 
   const selectedRoomId = activeRoomId || roomLoad[0]?.roomId || 'Room1'
+
+  const rangeLabel = useMemo(() => {
+    if (!rangeStartDate && !rangeEndDate) {
+      return 'All Dates'
+    }
+
+    if (rangeStartDate && rangeEndDate) {
+      return rangeStartDate === rangeEndDate ? rangeStartDate : `${rangeStartDate} to ${rangeEndDate}`
+    }
+
+    if (rangeStartDate) {
+      return `${rangeStartDate} onward`
+    }
+
+    return `Until ${rangeEndDate}`
+  }, [rangeStartDate, rangeEndDate])
 
   const lineSeries = useMemo(() => {
     if (!data) {
       return { actual: Array(24).fill(0), expected: Array(24).fill(0) }
     }
 
-    const roomHourly = data.hourly.filter((row) => row.room_id === selectedRoomId)
+    const roomHourly = filteredHourly.filter((row) => row.room_id === selectedRoomId)
     const actualByHour = Array.from({ length: 24 }, (_, hour) => {
       const values = roomHourly.filter((row) => toNum(row.hour) === hour).map((row) => toNum(row.total_energy_kwh))
       return Number(mean(values).toFixed(3))
@@ -212,14 +338,14 @@ function App() {
     })
 
     return { actual: actualByHour, expected: expectedByHour }
-  }, [data, selectedRoomId])
+  }, [data, filteredHourly, selectedRoomId])
 
   const anomalyRows = useMemo(() => {
     if (!data) {
       return []
     }
 
-    return [...data.anomalies]
+    return [...filteredAnomalies]
       .sort((a, b) => new Date(b.hour_start).getTime() - new Date(a.hour_start).getTime())
       .slice(0, 12)
       .map((row) => {
@@ -232,7 +358,7 @@ function App() {
           severity,
         }
       })
-  }, [data])
+  }, [data, filteredAnomalies])
 
   const rootCauseCounts = useMemo(() => {
     if (!data) {
@@ -240,7 +366,7 @@ function App() {
     }
 
     const counts = new Map<string, number>()
-    for (const row of data.anomalies) {
+    for (const row of filteredAnomalies) {
       for (const cause of row.anomaly_cause.split(';')) {
         const trimmed = cause.trim()
         if (!trimmed) {
@@ -254,7 +380,7 @@ function App() {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([name, value]) => ({ name, value }))
-  }, [data])
+  }, [data, filteredAnomalies])
 
   const summary = useMemo(() => {
     if (!data) {
@@ -269,30 +395,30 @@ function App() {
       }
     }
 
-    const avgOccupancy = mean(data.hourly.map((row) => toNum(row.occupied_fraction)))
-    const peakDemand = data.hourly.reduce((max, row) => Math.max(max, toNum(row.total_energy_kwh)), 0)
-    const energyIntensity = mean(data.kpis.map((row) => toNum(row.avg_actual_load_kwh)))
-    const expectedAvg = mean(data.kpis.map((row) => toNum(row.avg_expected_load_kwh)))
+    const avgOccupancy = mean(filteredHourly.map((row) => toNum(row.occupied_fraction)))
+    const peakDemand = filteredHourly.reduce((max, row) => Math.max(max, toNum(row.total_energy_kwh)), 0)
+    const energyIntensity = mean(filteredHourly.map((row) => toNum(row.total_energy_kwh)))
+    const expectedAvg = mean(data.expected.map((row) => toNum(row.expected_load_kwh)))
     const carbonDelta = expectedAvg > 0 ? ((expectedAvg - energyIntensity) / expectedAvg) * 100 : 0
 
-    const totalKwh = data.hourly.reduce((sum, row) => sum + toNum(row.total_energy_kwh), 0)
+    const totalKwh = filteredHourly.reduce((sum, row) => sum + toNum(row.total_energy_kwh), 0)
     const carbonKg = totalKwh * 0.408
 
     const weekOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     const weeklyTrend = weekOrder.map((day) => {
-      const energyByDay = data.hourly.filter((row) => row.hour_start.includes(day) || false)
+      const energyByDay = filteredHourly.filter((row) => row.hour_start.includes(day) || false)
       if (energyByDay.length > 0) {
         return mean(energyByDay.map((row) => toNum(row.total_energy_kwh)))
       }
 
-      const byWeekday = data.hourly.filter((row) => {
+      const byWeekday = filteredHourly.filter((row) => {
         const timestamp = new Date(row.hour_start)
         return weekOrder[timestamp.getDay() === 0 ? 6 : timestamp.getDay() - 1] === day
       })
       return mean(byWeekday.map((row) => toNum(row.total_energy_kwh)))
     })
 
-    const latestTs = data.hourly.reduce((latest, row) => {
+    const latestTs = filteredHourly.reduce((latest, row) => {
       if (!latest) {
         return row.hour_start
       }
@@ -306,9 +432,12 @@ function App() {
       carbonDelta,
       carbonKg,
       weeklyTrend,
-      latestDate: latestTs ? new Date(latestTs).toLocaleDateString('en-SG', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A',
+      latestDate:
+        latestTs
+          ? new Date(latestTs).toLocaleDateString('en-SG', { day: '2-digit', month: 'short', year: 'numeric' })
+          : 'N/A',
     }
-  }, [data])
+  }, [data, filteredHourly])
 
   const barOption = {
     color: ['#0f9aa8', '#8aa5b0'],
@@ -426,10 +555,46 @@ function App() {
       <header className="dash-header panel">
         <div>
           <h1>ROBOD: Campus Building Management Dashboard</h1>
-          <p>Singapore UTC +08:00 · SDE4 @ NUS · Active Focus: {selectedRoomId}</p>
+          <p>Singapore UTC +08:00 · SDE4 @ NUS · Active Focus: {selectedRoomId} · Range: {rangeLabel}</p>
         </div>
         <div className="header-tags">
-          <span className="date-pill">{summary.latestDate}</span>
+          <div className="date-filter-group">
+            <label className="date-filter" htmlFor="global-start-date-filter">
+              <span>From</span>
+              <input
+                id="global-start-date-filter"
+                type="date"
+                value={rangeStartDate}
+                min={availableDates[0] || undefined}
+                max={rangeEndDate || availableDates[availableDates.length - 1] || undefined}
+                onChange={(event) => {
+                  const nextStartDate = event.target.value
+                  setRangeStartDate(nextStartDate)
+                  if (rangeEndDate && nextStartDate && nextStartDate > rangeEndDate) {
+                    setRangeEndDate(nextStartDate)
+                  }
+                }}
+              />
+            </label>
+
+            <label className="date-filter" htmlFor="global-end-date-filter">
+              <span>To</span>
+              <input
+                id="global-end-date-filter"
+                type="date"
+                value={rangeEndDate}
+                min={rangeStartDate || availableDates[0] || undefined}
+                max={availableDates[availableDates.length - 1] || undefined}
+                onChange={(event) => {
+                  const nextEndDate = event.target.value
+                  setRangeEndDate(nextEndDate)
+                  if (rangeStartDate && nextEndDate && nextEndDate < rangeStartDate) {
+                    setRangeStartDate(nextEndDate)
+                  }
+                }}
+              />
+            </label>
+          </div>
           <span className="live-pill">LIVE</span>
         </div>
       </header>
